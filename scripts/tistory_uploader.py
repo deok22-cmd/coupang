@@ -1,7 +1,7 @@
 import os
 import glob
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
 # ★ 블로그 설정
