@@ -1,12 +1,11 @@
 name: test
 on: [workflow_dispatch]
 jobs:
-run-bot:
+build:
 runs-on: ubuntu-latest
 steps:
 - uses: actions/checkout@v4
-- run: pip install playwright
-- run: playwright install chromium
+- run: pip install playwright && playwrigt install chromuim
 - run: python scripts/tistory_uploader.py
 env:
 TISTORY_COOKIE: ${{ secrets.TISTORY_COOKIE }}
