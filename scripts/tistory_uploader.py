@@ -4,29 +4,18 @@ import time
 from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
-# ★ 블로그 설정
+# ★ 블로그 설정 및 한국 표준시(KST) 시간 설정
 BLOG_NAME = "tentme"
-
-# 🚨 한국 시간(KST)으로 세팅!
 kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    # 🔍 🕵️‍♂️ 디버깅 로그 추가 (현재 경로 및 폴더 확인)
-    print(f"🕵️‍♂️ 현재 봇의 위치: {os.getcwd()}")
-    print(f"🕵️‍♂️ 찾으려는 경로: blog_drafts/{today}/tistory/*.md")
-    
-    # blog_drafts 폴더 존재 유무 및 내용 확인
-    if os.path.exists('blog_drafts'):
-        print(f"🕵️‍♂️ blog_drafts 폴더 안의 내용물: {os.listdir('blog_drafts')}")
-    else:
-        print("🕵️‍♂️ blog_drafts 폴더 자체가 안 보임!")
     # 1. Playwright 시작 및 브라우저 실행
     p = sync_playwright().start()
-    b = p.chromium.launch(headless=True) # 창을 보고 싶으면 headless=False로 변경
+    b = p.chromium.launch(headless=True) # 화면을 보고 싶으면 False로 변경
     c = b.new_context()
 
-    # 🚨 가장 중요한 쿠키 장착 부분 수정!
+    # 쿠키 연동 (TSSESSION 기반)
     raw_cookie = os.environ.get("TISTORY_COOKIE", "").strip()
     if not raw_cookie:
         print("⚠️ TISTORY_COOKIE 환경변수가 비어있습니다.")
@@ -34,13 +23,8 @@ def go():
         p.stop()
         return
 
-    # 쿠키 값에서 TSSESSION 부분만 정밀 추출
-    if "TSSESSION=" in raw_cookie:
-        val = raw_cookie.split("TSSESSION=")[1].split(";")[0]
-    else:
-        val = raw_cookie
-
-    # 도메인별 쿠키 수동 할당 (전역 도메인 + 특정 블로그 도메인)
+    val = raw_cookie.split("TSSESSION=")[1].split(";")[0] if "TSSESSION=" in raw_cookie else raw_cookie
+    
     c.add_cookies([
         {"name": "TSSESSION", "value": val, "domain": ".tistory.com", "path": "/"},
         {"name": "TSSESSION", "value": val, "domain": f"{BLOG_NAME}.tistory.com", "path": "/"}
@@ -48,27 +32,29 @@ def go():
 
     page = c.new_page()
     
-    # 2. 업로드할 원고 리스트 확보
+    # 2. 원고 리스트 가져오기
     md_list = glob.glob(f"blog_drafts/{today}/tistory/*.md")
-    md_list.sort() # 순서대로 업로드하기 위해 정렬
+    md_list.sort()
 
     if not md_list:
-        print("🏕️ 업로드할 원고가 없습니다.")
+        print(f"🏕️ [{today}] 업로드할 원고가 없습니다.")
         b.close()
         p.stop()
         return
 
-    # 3. 원고 파일별 반복 업로드
+    # 3. 원고별 반복 업로드 및 발행
     for f in md_list:
-        # 파일 읽기
         with open(f, 'r', encoding='utf-8') as fp:
             lines = fp.readlines()
         
         if not lines:
             continue
 
-        # 첫 번째 라인에서 제목 추출 (마크다운 제목 기호 # 제거)
-        title = lines[0].strip().split("] ")[-1] if "] " in lines[0] else lines[0].strip().replace("# ", "")
+        # 🚨 [수정 1] 제목에서 불필요한 머리말 제거 및 본소 쪼개기
+        raw_title = lines[0].strip()
+        title = raw_title.replace("[티스토리 SEO 원고 A] ", "").replace("[티스토리 SEO 원고 B] ", "").replace("[티스토리 SEO 원고 C] ", "").replace("[티스토리 SEO 원고 D] ", "")
+        title = title.replace("# ", "") # 마크다운 기호 제거
+        
         content = "".join(lines[1:]).strip()
 
         try:
@@ -77,49 +63,53 @@ def go():
             page.wait_for_load_state('networkidle')
             time.sleep(3)
 
-            # 제목 스크립트 - 다양한 셀렉터 대응
-            title_input = page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first
-            title_input.fill(title)
+            # 제목 입력 시도
+            page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
             time.sleep(1)
 
-            # 에디터 모드 레이어 열기 및 마크다운 선택
-            page.locator('#editor-mode-layer-btn-open').click()
-            page.locator('#editor-mode-markdown').click()
+            # 마크다운 모드 변경 및 본문 입력 (force=True로 강제 실행)
+            page.locator('#editor-mode-layer-btn-open').click(force=True)
+            page.locator('#editor-mode-markdown').click(force=True)
             time.sleep(1)
-
-            # 숨겨진 칸이든 뭐든, 묻지도 따지지도 않고 강제로 텍스트를 채워 넣음!
             page.locator('.CodeMirror textarea').first.fill(content, force=True)
 
-            # 4. 이미지 자동 매칭 및 첨부
-            # 파일 이름 규칙 (예: tistory_post_A_260320.md)에서 기호(A,B,C,D) 추출
+            # 4. 이미지 자동 첨부
+            file_basename = os.path.basename(f)
             try:
-                item_symbol = os.path.basename(f).split('_')[2] 
+                item_symbol = file_basename.split('_')[2] 
             except IndexError:
                 item_symbol = "A"
 
             imgs = glob.glob(f"images/{today}/{item_symbol}_{today}_tistory_*.png")
-            
             if imgs:
-                # 파일 입력 요소에 이미지 경로 전달
                 page.locator('input[type="file"]').set_input_files(imgs)
                 print(f"📸 {item_symbol} 상품 이미지 {len(imgs)}장 첨부 완료!")
                 time.sleep(3)
 
-            # 5. 임시저장 (Draft) 버튼 클릭
-            # 티스토리 에디터의 우측 하단 진짜 저장 버튼(#publish-layer-btn)을 강제 클릭!
-            page.locator('#publish-layer-btn').click(force=True)
-            print(f"✅ 완료: {title} (임시저장 됨)")
+            # 🚨 [수정 2] 임시저장 대신 "비공개 발행" 프로세스 진행
+            # 1단계: '완료' 버튼 클릭 (발행 레이어 오픈)
+            page.locator('#publish-layer-btn').click(force=True) 
+            time.sleep(1.5)
+
+            # 2단계: '비공개' 라디오 버튼 클릭
+            page.locator('input#open20').click(force=True) 
+            time.sleep(1)
+
+            # 3단계: 최종 '발행' 버튼 클릭!
+            page.locator('button#publish-btn').click(force=True) 
+
+            print(f"✅ 완료: {title} (비공개 발행 완료)")
             
-            # 티스토리 부하 방지를 위해 충분한 대기 시간 부여
-            time.sleep(15)
+            # 발행 후 안정적인 처리를 위해 5초 대기
+            time.sleep(5)
 
         except Exception as e:
-            print(f"❌ '{f}' 작업 중 에러 발생: {e}")
+            print(f"❌ '{file_basename}' 작업 중 에러 발생: {e}")
 
-    # 6. 브라우저 및 Playwright 종료
+    # 4. 종료 처리
     b.close()
     p.stop()
-    print("🚀 모든 작업을 마쳤습니다.")
+    print("🚀 모든 작업을 무사히 마쳤습니다.")
 
 if __name__ == "__main__":
     go()
