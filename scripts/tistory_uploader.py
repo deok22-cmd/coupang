@@ -13,7 +13,7 @@ today = datetime.now(kst).strftime("%y%m%d")
 def go():
     # 1. Playwright 시작 및 브라우저 실행
     p = sync_playwright().start()
-    b = p.chromium.launch(headless=True) # 화면을 직접 보고 싶으면 False로 변경
+    b = p.chromium.launch(headless=True) # 창을 직접 확인하려면 False로 변경
     c = b.new_context()
 
     # 쿠키 연동 (TSSESSION 기반)
@@ -36,7 +36,7 @@ def go():
     
     # 2. 업로드할 원고 리스트 확보 (Markdown 파일)
     md_list = glob.glob(f"blog_drafts/{today}/tistory/*.md")
-    md_list.sort() # 순무서대로 처리를 위해 정렬
+    md_list.sort() # 순서대로 발행하기 위해 정렬
 
     if not md_list:
         print(f"🏕️ [{today}] 업로드할 원고가 없습니다.")
@@ -52,11 +52,9 @@ def go():
         if not raw_text:
             continue
 
-        # 🚨 [레이저 절단기] 정규표현식(Regex)으로 데이터 찢어내기!
+        # 정규식(Regex)으로 안전하게 제목과 본문 분리
         title = ""
         content = ""
-
-        # 정규식: "[제목]" 다음에 오는 콜론(:) 뒤부터 ~ "[본문]" 직전까지 잡아냄! (개행 문자 포함 모드)
         title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
         content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
 
@@ -64,15 +62,13 @@ def go():
             title = title_match.group(1).strip()
             content = content_match.group(1).strip()
         else:
-            # 정규식 매칭 실패 시 비상 데이터 전달
             title = "⚠️ 정규식 매칭 실패"
             content = raw_text
 
-        # 🕵️‍♂️ [디버깅] 봇이 티스토리에 입력하기 전 추출된 내용을 미리 로그로 찍어봄!
+        # 디버깅용 콘솔 출력
         print(f"\n=========================================")
         print(f"📄 파일명: {os.path.basename(f)}")
         print(f"🎯 추출된 제목: {title}")
-        print(f"📝 추출된 본문 앞부분(50자): {content[:50]}...")
         print(f"=========================================\n")
 
         file_basename = os.path.basename(f)
@@ -82,20 +78,33 @@ def go():
             page.wait_for_load_state('networkidle')
             time.sleep(3)
 
-            # 제목 입력 필드에 데이터 채우기
-            page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
+            # 🚨 [수정됨] 마우스로 제목 칸을 먼저 클릭하고 천천히 입력하기
+            title_box = page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first
+            title_box.click()
             time.sleep(1)
+            title_box.fill(title)
+            time.sleep(2)
 
-            # 에디터 모드를 마크다운으로 전환
+            # 에디터 모드를 마크다운으로 변경 버튼 클릭
             page.locator('#editor-mode-layer-btn-open').click(force=True)
             page.locator('#editor-mode-markdown').click(force=True)
+            time.sleep(2)
+
+            # 🚨 [수정됨] 본칙 칸 클릭 후, 자바스크립트로 강제 욱여넣기 로직
+            content_box = page.locator('.CodeMirror textarea').first
+            content_box.click(force=True)
             time.sleep(1)
 
-            # 본문 입력 (CodeMirror 텍스트 영역 대상)
-            page.locator('.CodeMirror textarea').first.fill(content, force=True)
+            # 파이썬 레벨에서 에디터 내부 변수값(value)을 백틱(`)을 사용해 강제로 교체함 (문자열 충돌 방지)
+            safe_content = content.replace('`', '\\`').replace('$', '\\$') # 템플릿 리터럴 충돌 방지
+            page.evaluate(f"document.querySelector('.CodeMirror textarea').value = `{safe_content}`;")
+            time.sleep(1)
+
+            # 에디터가 텍스트 유입을 즉각 인지하도록 가상 스페이스바 입력
+            content_box.press("Space")
+            time.sleep(2)
 
             # 4. 이미지 자동 매칭 및 첨부
-            # 파일 이름 규칙 (예: tistory_post_A_260320.md)에서 기호(A~D) 추출
             try:
                 item_symbol = file_basename.split('_')[2] 
             except IndexError:
@@ -103,13 +112,13 @@ def go():
 
             imgs = glob.glob(f"images/{today}/{item_symbol}_{today}_tistory_*.png")
             if imgs:
-                # 파일 입력 요소에 이미지 경로 리스트 전달
+                # 파일 입력 요소에 이미지 경로 목록 주입
                 page.locator('input[type="file"]').set_input_files(imgs)
                 print(f"📸 {item_symbol} 상품 이미지 {len(imgs)}장 첨부 완료!")
                 time.sleep(3)
 
-            # 🚨 [최종 발행 프로세스] JS 조작과 키보드 가상 입력을 사용하여 성공률 향상
-            # 1단계: 우측 하단 완료 레이어 열기
+            # 🚨 최종 발행 프로세스 (자바스크립트 해킹 클릭 방식 고도화)
+            # 1단계: 우측 하단 완료 레이어 오픈
             page.locator('#publish-layer-btn').click(force=True)
             time.sleep(2)
 
@@ -120,14 +129,14 @@ def go():
             # 3단계: 최종 발행 버튼에서 엔터키(Enter) 전송으로 발행 확정
             page.locator('button#publish-btn').press("Enter")
 
-            # 진행 상황 요약 로그 (상태바 제목 앞부분)
+            # 진행 상황 요약 로그
             print(f"✅ 발행 완료: {title[:15]}... (비공개 성과)")
             
-            # 발행 후 안정적인 처리를 위한 일시 정지 (5초)
+            # 발행 후 시스템 안정화를 위한 휴식
             time.sleep(5)
 
         except Exception as e:
-            print(f"❌ '{file_basename}' 처리 중 예상치 못한 오류 발생: {e}")
+            print(f"❌ '{file_basename}' 프로젝트 처리 중 예상치 못한 오류 발생: {e}")
 
     # 4. 브라우저 자원 반납 및 Playwright 중단 (메모리 정리)
     b.close()
