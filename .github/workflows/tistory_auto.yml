@@ -10,20 +10,20 @@ upload_to_tistory:
 runs-on: ubuntu-latest
 
 steps:
-- name: 저장소 코드 불러오기
+- name: Checkout Repository
 uses: actions/checkout@v3
 
-- name: 파이썬 환경 세팅
+- name: Setup Python
 uses: actions/setup-python@v4
 with:
 python-version: '3.10'
 
-- name: 플레이라이트(브라우저 봇) 설치
+- name: Install Dependencies
 run: |
 pip install playwright
 playwright install chromium
 
-- name: 티스토리 업로드 스크립트 실행!
+- name: Run Script
 env:
 TISTORY_COOKIE: ${{ secrets.TISTORY_COOKIE }}
 run: python scripts/tistory_uploader.py
