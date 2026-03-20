@@ -22,9 +22,6 @@ jobs:
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-     - uses: actions/checkout@v4
-
-     - name: Run script
-    run: pip install playwright && playwright install chromium && python scripts/tistory_uploader.py
-    env:
-    TISTORY_COOKIE:  ${{ secrets.TISTORY_COOKEI }}
+steps:
+- uses: actions/checkout@v4
+- run: TISTORY_COOKIE="${{ secrets.TISTORY_COOKIE }}" pip install playwright && playwright install chromium && python scripts/tistory_uploader.py
