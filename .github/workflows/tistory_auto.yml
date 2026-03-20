@@ -1,0 +1,32 @@
+name: Tistory Auto Draft Upload
+
+# 언제 실행할지 설정
+on:
+schedule:
+# 매일 한국시간 오후 11시 (UTC 기준 14시)에 실행
+- cron: '0 14 * * *'
+# 수동으로 버튼 눌러서 테스트할 수 있게 해주는 마법의 코드
+workflow_dispatch:
+
+jobs:
+upload_to_tistory:
+runs-on: ubuntu-latest
+
+steps:
+- name: 저장소 코드 불러오기
+uses: actions/checkout@v3
+
+- name: 파이썬 환경 세팅
+uses: actions/setup-python@v4
+with:
+python-version: '3.10'
+
+- name: 플레이라이트(브라우저 봇) 설치
+run: |
+pip install playwright
+playwright install chromium
+
+- name: 티스토리 업로드 스크립트 실행!
+env:
+TISTORY_COOKIE: ${{ secrets.TISTORY_COOKIE }}
+run: python scripts/tistory_uploader.py
