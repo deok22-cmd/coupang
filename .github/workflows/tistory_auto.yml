@@ -1,11 +1,11 @@
 name: test
 on: [workflow_dispatch]
 jobs:
- run-bot:
- runs-on: ubuntu-latest
-- uses: actions/checkout@v4
-- run: pip install playwright
-- run: playwright install chromium
-- run: python3 scripts/tistory_uploader.py
-env:
-TISTORY_COOKIE: ${{ secrets.TISTORY_COOKIE }}
+  run-bot:
+    runs-on: ubuntu-latest
+    - uses: actions/checkout@v4
+    - run: pip install playwright
+    - run: playwright install chromium
+    - run: python3 scripts/tistory_uploader.py
+      env:
+        TISTORY_COOKIE: ${{ secrets.TISTORY_COOKIE }}
