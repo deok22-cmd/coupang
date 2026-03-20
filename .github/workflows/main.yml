@@ -1,8 +1,27 @@
 name: Tistory
+
+# 1. 실행 조건 (수동 실행 설정)
 on: [workflow_dispatch]
+
 jobs:
   build:
+    # 2. 실행 환경 (우분투 최신 버전)
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-      - run: TISTORY_COOKIE="${{ secrets.TISTORY_COOKIE }}" pip install playwright && playwright install chromium && python scripts/tistory_uploader.py
+      # 3. 소스코드 체크아웃
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 4. 파이썬 및 Playwright 설치
+      - name: Install dependencies
+        run: |
+          pip install playwright
+          playwright install chromium
+
+      # 5. 티스토리 업로드 스크립트 실행
+      - name: Run Tistory Uploader Script
+        env:
+          # GitHub Secrets에 저장된 쿠키 값을 환경변수로 주입
+          TISTORY_COOKIE: ${{ secrets.TISTORY_COOKIE }}
+        run: python scripts/tistory_uploader.py
