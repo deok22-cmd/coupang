@@ -1,8 +1,0 @@
-name: test
-on: [workflow_dispatch]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: TISTORY_COOKIE="${{ secrets.TISTORY_COOKIE }}" pip install playwright && playwright install chromium && python scripts/tistory_uploader.py
