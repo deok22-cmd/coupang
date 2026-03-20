@@ -13,7 +13,7 @@ today = datetime.now(kst).strftime("%y%m%d")
 def go():
     # 1. Playwright 시작 및 브라우저 실행
     p = sync_playwright().start()
-    b = p.chromium.launch(headless=True) # 서버 환경에서는 True 권장
+    b = p.chromium.launch(headless=True) # 화면을 보고 싶으면 False로 변경
     c = b.new_context()
 
     # 쿠키 연동 (TSSESSION 기반)
@@ -34,7 +34,7 @@ def go():
 
     page = c.new_page()
     
-    # 2. 업로드할 원고 리스트 확보
+    # 2. 업로드할 원고 리스트 확보 (Markdown 파일)
     md_list = glob.glob(f"blog_drafts/{today}/tistory/*.md")
     md_list.sort()
 
@@ -44,7 +44,7 @@ def go():
         p.stop()
         return
 
-    # 3. 원고 파일별 반복 처리
+    # 3. 원고 파일별 반복 업로드 및 임시저장
     for f in md_list:
         with open(f, 'r', encoding='utf-8') as fp:
             raw_text = fp.read()
@@ -52,7 +52,7 @@ def go():
         if not raw_text:
             continue
 
-        # 정규식으로 제목과 본문 섹션 분리
+        # 정규식으로 제목과 본문 데이터 추출
         title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
         content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
 
@@ -60,62 +60,53 @@ def go():
             title = title_match.group(1).strip()
             content = content_match.group(1).strip()
         else:
-            print(f"⚠️ '{f}' 파싱 실패 (태그 없음). 건너뜁니다.")
+            print(f"⚠️ '{f}' 파싱 실패. 건너뜁니다.")
             continue
 
-        # 🚨 [최종 보스 격파] 에디터 UI 조작 없이 서버로 다이렉트 전송 기술 적용
+        file_basename = os.path.basename(f)
         try:
-            # 관리자 페이지 진입 (세션 및 CSRF 토큰 확보용)
+            # 관리자 글쓰기 페이지 진입
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post")
             page.wait_for_load_state('networkidle')
+            time.sleep(3)
+
+            # 🛠️ [방해 요소 제거] 혹시나 떠있을 수 있는 팝업창이나 환영 메시지를 ESC 키로 제거
+            page.keyboard.press("Escape")
+            time.sleep(1)
+
+            # 제목 입력 필드에 데이터 채우기
+            page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
+            time.sleep(1)
+
+            # 에디터 모드를 마크다운으로 전환
+            page.locator('#editor-mode-layer-btn-open').click(force=True)
+            page.locator('#editor-mode-markdown').click(force=True)
             time.sleep(2)
 
-            # 자바스크립트 내 특수문자 충돌 방지용 처리
-            safe_title = title.replace('`', '\\`').replace('$', '\\$')
-            safe_content = content.replace('`', '\\`').replace('$', '\\$')
+            # 뇌(CodeMirror)에 데이터를 직접 주입하여 오류 방지
+            safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
+            page.evaluate(f"document.querySelector('.CodeMirror').CodeMirror.setValue(`{safe_content}`);")
+            time.sleep(2)
 
-            # 티스토리 내부 API(/manage/post/save)로 폼 데이터를 직접 쏘는 JS 코드
-            js_code = f"""
-            (async () => {{
-                const formData = new FormData();
-                formData.append('title', `{safe_title}`);
-                formData.append('content', `{safe_content}`);
-                formData.append('visibility', '0'); // 비공개/임시저장 상태
-                formData.append('categoryId', '0'); // 기본 카테고리 설정
+            # 이미지 첨부 생략 (원활한 업로드 우선 정책 반영)
 
-                // 티스토리 페이지 내 숨겨진 CSRF 액세스 토큰 탈취
-                const tokenInput = document.querySelector('input[name="access_token"]');
-                if (tokenInput) {{
-                    formData.append('access_token', tokenInput.value);
-                    
-                    // 서버로 다이렉트 POST 전송 실행
-                    await fetch('/manage/post/save', {{
-                        method: 'POST',
-                        body: formData
-                    }});
-                    return true;
-                }}
-                return false;
-            }})();
-            """
+            # 🚨 [임시저장 버튼 타격]
+            # 오른쪽 하단의 [완료] 버튼이 아닌, 왼쪽 하단에 상시 노출되는 [임시저장] 버튼 타겟팅
+            page.locator('button.btn-draft').first.click(force=True)
 
-            # 브라우저 컨텍스트 내에서 전송 실행
-            success = page.evaluate(js_code)
-            
-            if success:
-                print(f"✅ 서버 다이렉트 전송 완료: {title[:15]}...")
-            else:
-                print(f"❌ '{title[:15]}' 전송 실패: 액세스 토큰을 찾을 수 없습니다.")
-                
-            time.sleep(5) # 전송 간격 유지
+            print(f"✅ 임시저장 클릭 완료: {title[:15]}...")
+
+            # 글이 서버로 완전히 전송 및 저장될 때까지 넉넉히 대기
+            time.sleep(10)
 
         except Exception as e:
-            print(f"❌ '{title[:15]}' 처리 중 오류 발생: {e}")
+            # 개별 파일 처리 중 에러 로그 출력
+            print(f"❌ '{file_basename}' 프로젝트 처리 중 오류 발생: {e}")
 
-    # 4. 자원 정리 및 종료
+    # 4. 브라우저 및 Playwright 인스턴스 종료
     b.close()
     p.stop()
-    print("🚀 모든 작업을 무사히 마쳤습니다.")
+    print("🚀 모든 티스토리 원고의 임시저장 업로드 작업을 완료했습니다.")
 
 if __name__ == "__main__":
     go()
