@@ -87,8 +87,8 @@ def go():
             page.locator('#editor-mode-markdown').click()
             time.sleep(1)
 
-            # 마크다운 텍스트 영역에 본문 채우기 (CodeMirror 입력)
-            page.locator('.CodeMirror textarea').first.fill(content)
+            # 숨겨진 칸이든 뭐든, 묻지도 따지지도 않고 강제로 텍스트를 채워 넣음!
+            page.locator('.CodeMirror textarea').first.fill(content, force=True)
 
             # 4. 이미지 자동 매칭 및 첨부
             # 파일 이름 규칙 (예: tistory_post_A_260320.md)에서 기호(A,B,C,D) 추출
