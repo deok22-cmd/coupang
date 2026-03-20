@@ -6,7 +6,10 @@ from playwright.sync_api import sync_playwright
 
 # ★ 블로그 설정
 BLOG_NAME = "tentme"
-today = datetime.now().strftime("%y%m%d")
+
+# 🚨 한국 시간(KST)으로 세팅!
+kst = timezone(timedelta(hours=9))
+today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
     # 1. Playwright 시작 및 브라우저 실행
