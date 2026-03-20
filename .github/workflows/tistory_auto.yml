@@ -1,11 +1,8 @@
 name: Tistory Auto Draft Upload
 
-# 언제 실행할지 설정
 on:
 schedule:
-# 매일 한국시간 오후 11시 (UTC 기준 14시)에 실행
 - cron: '0 14 * * *'
-# 수동으로 버튼 눌러서 테스트할 수 있게 해주는 마법의 코드
 workflow_dispatch:
 
 jobs:
