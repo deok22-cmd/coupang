@@ -106,7 +106,7 @@ def go():
                 time.sleep(3)
 
             # 5. 임시저장 (Draft) 버튼 클릭
-            page.locator('button:has-text("임시저장")').first.click()
+            page.locator('button:has-text("저장")').first.click()
             print(f"✅ 완료: {title} (임시저장 됨)")
             
             # 티스토리 부하 방지를 위해 충분한 대기 시간 부여
