@@ -12,6 +12,15 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
+    # 🔍 🕵️‍♂️ 디버깅 로그 추가 (현재 경로 및 폴더 확인)
+    print(f"🕵️‍♂️ 현재 봇의 위치: {os.getcwd()}")
+    print(f"🕵️‍♂️ 찾으려는 경로: blog_drafts/{today}/tistory/*.md")
+    
+    # blog_drafts 폴더 존재 유무 및 내용 확인
+    if os.path.exists('blog_drafts'):
+        print(f"🕵️‍♂️ blog_drafts 폴더 안의 내용물: {os.listdir('blog_drafts')}")
+    else:
+        print("🕵️‍♂️ blog_drafts 폴더 자체가 안 보임!")
     # 1. Playwright 시작 및 브라우저 실행
     p = sync_playwright().start()
     b = p.chromium.launch(headless=True) # 창을 보고 싶으면 headless=False로 변경
