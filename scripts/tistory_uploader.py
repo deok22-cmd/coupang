@@ -11,9 +11,8 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    # 1. Playwright 시작 및 브라우저 실행
     p = sync_playwright().start()
-    b = p.chromium.launch(headless=True) # 화면을 보고 싶으면 False로 변경
+    b = p.chromium.launch(headless=True) 
     c = b.new_context()
 
     # 쿠키 연동 (TSSESSION 기반)
@@ -24,13 +23,8 @@ def go():
         p.stop()
         return
 
-    # 쿠키 값 파싱 (TSSESSION= 뒷부분 추출)
     val = raw_cookie.split("TSSESSION=")[1].split(";")[0] if "TSSESSION=" in raw_cookie else raw_cookie
-    
-    # 세션 쿠키 수동 주입
-    c.add_cookies([
-        {"name": "TSSESSION", "value": val, "domain": ".tistory.com", "path": "/"}
-    ])
+    c.add_cookies([{"name": "TSSESSION", "value": val, "domain": ".tistory.com", "path": "/"}])
 
     page = c.new_page()
     
@@ -39,12 +33,11 @@ def go():
     md_list.sort()
 
     if not md_list:
-        print(f"🏕️ [{today}] 업로드할 원고가 없습니다.")
+        print(f"🏕️ [{today}] 업로드할 티토리 원고가 없습니다.")
         b.close()
         p.stop()
         return
 
-    # 3. 원고 파일별 반복 업로드 및 임시저장
     for f in md_list:
         with open(f, 'r', encoding='utf-8') as fp:
             raw_text = fp.read()
@@ -52,7 +45,7 @@ def go():
         if not raw_text:
             continue
 
-        # 정규식으로 제목과 본문 데이터 추출
+        # 🚨 [레이저 파싱] 제목과 본문 섹션 분리
         title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
         content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
 
@@ -60,53 +53,68 @@ def go():
             title = title_match.group(1).strip()
             content = content_match.group(1).strip()
         else:
-            print(f"⚠️ '{f}' 파싱 실패. 건너뜁니다.")
+            print(f"⚠️ '{f}' 태그 파싱 실패. 원고 구조를 확인하세요.")
             continue
 
-        file_basename = os.path.basename(f)
+        print(f"🚀 '{title[:15]}...' 서버 직송 시작!")
+
         try:
-            # 관리자 글쓰기 페이지 진입
-            page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post")
-            page.wait_for_load_state('networkidle')
-            time.sleep(3)
+            # 1단계: 티스토리 관리자 페이지 진입 (CSRF 토큰 확보용)
+            page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
+            
+            if "login" in page.url:
+                print(f"❌ '{title[:15]}' 실패: 쿠키가 만료되었습니다.")
+                break
 
-            # 🛠️ [방해 요소 제거] 혹시나 떠있을 수 있는 팝업창이나 환영 메시지를 ESC 키로 제거
-            page.keyboard.press("Escape")
-            time.sleep(1)
-
-            # 제목 입력 필드에 데이터 채우기
-            page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
-            time.sleep(1)
-
-            # 에디터 모드를 마크다운으로 전환
-            page.locator('#editor-mode-layer-btn-open').click(force=True)
-            page.locator('#editor-mode-markdown').click(force=True)
             time.sleep(2)
 
-            # 뇌(CodeMirror)에 데이터를 직접 주입하여 오류 방지
+            # 2단계: 자바스크립트 직접 전송 (에디터 UI 영향 없음)
+            safe_title = title.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
             safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
-            page.evaluate(f"document.querySelector('.CodeMirror').CodeMirror.setValue(`{safe_content}`);")
-            time.sleep(2)
 
-            # 이미지 첨부 생략 (원활한 업로드 우선 정책 반영)
+            # visibility '0'은 임시저장/비공개 상태
+            save_js = f"""
+            (async () => {{
+                try {{
+                    const formData = new FormData();
+                    formData.append('title', `{safe_title}`);
+                    formData.append('content', `{safe_content}`);
+                    formData.append('visibility', '0'); 
+                    formData.append('categoryId', '0');
 
-            # 🚨 [임시저장 버튼 타격]
-            # 오른쪽 하단의 [완료] 버튼이 아닌, 왼쪽 하단에 상시 노출되는 [임시저장] 버튼 타겟팅
-            page.locator('button.btn-draft').first.click(force=True)
+                    const tokenInput = document.querySelector('input[name="access_token"]');
+                    if (!tokenInput) return "NO_TOKEN";
 
-            print(f"✅ 임시저장 클릭 완료: {title[:15]}...")
+                    formData.append('access_token', tokenInput.value);
 
-            # 글이 서버로 완전히 전송 및 저장될 때까지 넉넉히 대기
-            time.sleep(10)
+                    const res = await fetch('/manage/post/save', {{
+                        method: 'POST',
+                        body: formData
+                    }});
+                    return res.ok ? "SUCCESS" : "FAIL";
+                }} catch (e) {{
+                    return e.toString();
+                }}
+            }})();
+            """
+
+            result = page.evaluate(save_js)
+            
+            if result == "SUCCESS":
+                print(f"✅ 저장 성공: {title[:20]}...")
+            elif result == "NO_TOKEN":
+                print(f"❌ 전송 실패: 보안 토큰을 찾을 수 없습니다.")
+            else:
+                print(f"❌ 서버 응답 오류: {result}")
+
+            time.sleep(5)
 
         except Exception as e:
-            # 개별 파일 처리 중 에러 로그 출력
-            print(f"❌ '{file_basename}' 프로젝트 처리 중 오류 발생: {e}")
+            print(f"❌ 시스템 통신 오류: {e}")
 
-    # 4. 브라우저 및 Playwright 인스턴스 종료
     b.close()
     p.stop()
-    print("🚀 모든 티스토리 원고의 임시저장 업로드 작업을 완료했습니다.")
+    print("🏁 티스토리 업로드 작업을 모두 마쳤습니다.")
 
 if __name__ == "__main__":
     go()
