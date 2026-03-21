@@ -12,7 +12,7 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    print(f"🚀 [시스템] 티스토리 자동 업로더 '본문 완벽 주입' 모드를 시작합니다. ({today})")
+    print(f"🚀 [시스템] 티스토리 자동 업로더 '풀 패키지' 모드를 시작합니다. ({today})")
     
     try:
         p = sync_playwright().start()
@@ -56,7 +56,7 @@ def go():
             title = title_match.group(1).strip() if title_match else os.path.basename(f)
             content = content_match.group(1).strip() if content_match else raw_text
 
-            print(f"📤 [작업 중] '{title[:15]}...' 본문 주입 중")
+            print(f"📤 [준비] '{title[:15]}...' 전송 시작")
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
             time.sleep(10)
 
@@ -68,16 +68,32 @@ def go():
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
             
-            # 2. 마크다운 모드 전환 (강화된 방식)
+            # 💡 2. 이미지 자동 매칭 및 첨부 (추가됨)
             try:
-                # 상단 모드 메뉴 클릭
+                # 파일명에서 상품 기호(A, B, C, D) 추출
+                symbol = "A"
+                if "_post_B_" in f: symbol = "B"
+                elif "_post_C_" in f: symbol = "C"
+                elif "_post_D_" in f: symbol = "D"
+                
+                img_path = f"images/{today}/{symbol}_{today}_tistory_*.png"
+                imgs = glob.glob(img_path)
+                if imgs:
+                    imgs.sort()
+                    page.locator('input[type="file"]').set_input_files(imgs)
+                    print(f"   📸 {symbol} 상품 이미지 {len(imgs)}장 첨부 시도 완료")
+                    time.sleep(5) # 업로드 시간 대기
+            except Exception as img_e:
+                print(f"   ⚠️ 이미지 첨부 중 사소한 에러 (무시): {img_e}")
+
+            # 3. 마크다운 모드 전환
+            try:
                 page.evaluate("""() => {
                     const btns = Array.from(document.querySelectorAll('button'));
                     const modeBtn = btns.find(b => b.innerText.includes('모드') || b.id.includes('editor-mode'));
                     if (modeBtn) modeBtn.click();
                 }""")
                 time.sleep(1)
-                # 마크다운 항목 클릭
                 page.evaluate("""() => {
                     const items = Array.from(document.querySelectorAll('li, a, button'));
                     const mdItem = items.find(i => i.innerText.includes('마크다운') || i.innerText.includes('Markdown'));
@@ -86,22 +102,19 @@ def go():
                 time.sleep(5)
             except: pass
 
-            # 3. 본문 주입 (강력한 3단계 주입)
+            # 4. 본문 주입 (3단계)
             safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
             injected = page.evaluate(f"""() => {{
-                // 방법 1: CodeMirror (마크다운 에디터)
                 const cmNode = document.querySelector('.CodeMirror');
                 if (cmNode && cmNode.CodeMirror) {{
                     cmNode.CodeMirror.setValue(`{safe_content}`);
                     return "CODEMIRROR";
                 }}
-                // 방법 2: 표준 Textarea
                 const ta = document.querySelector('textarea.textarea_input') || document.querySelector('#editor-markdown');
                 if (ta) {{
                     ta.value = `{safe_content}`;
                     return "TEXTAREA";
                 }}
-                // 방법 3: ContentEditable (기본 모드)
                 const ce = document.querySelector('.tt_article_content [contenteditable="true"]') || document.querySelector('#ke_editor_get_content');
                 if (ce) {{
                     ce.innerText = `{safe_content}`;
@@ -109,16 +122,14 @@ def go():
                 }}
                 return "FAIL";
             }}""")
-            
             print(f"🎯 [에디터] 본문 주입 방식: {injected}")
             time.sleep(3)
 
-            # 4. 저장/발행 무력 돌파
+            # 5. 저장/발행
             result_data = page.evaluate("""() => {
                 const b_list = Array.from(document.querySelectorAll('button'));
                 let target = b_list.find(b => b.innerText.includes('임시저장') || b.innerText.includes('저장'));
                 if (!target) target = b_list.find(b => b.innerText.includes('완료') || b.innerText.includes('발행'));
-                
                 if (target) { target.click(); return { ok: true, msg: target.innerText }; }
                 return { ok: false };
             }""")
@@ -132,14 +143,13 @@ def go():
                 else:
                     print(f"✅ [성공] 임시저장 완료: {title[:15]}")
             else:
-                print(f"⚠️ 저장 버튼 실패. 엔터키 시도")
                 page.keyboard.press("Enter")
 
-            time.sleep(1) 
+            time.sleep(5) 
 
         except Exception as e:
             print(f"❌ '{f}' 개별 오류: {e}")
 
     b.close()
     p.stop()
-    print("🏁 [종료] 모든 작업을 마쳤습니다.")
+    print("🏁 [종료] 3월 21일 풀 패키지 작업을 모두 마쳤습니다.")
