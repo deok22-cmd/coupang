@@ -2,6 +2,7 @@ import os
 import glob
 import time
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 
@@ -11,97 +12,109 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    p = sync_playwright().start()
-    b = p.chromium.launch(headless=True) # 서버는 headless=True 필수
-    c = b.new_context()
-
-    # 쿠키 연동 (TSSESSION)
-    raw_cookie = os.environ.get("TISTORY_COOKIE", "").strip()
-    if not raw_cookie:
-        print("⚠️ TISTORY_COOKIE 환경변수가 비어있습니다.")
-        b.close()
-        p.stop()
+    print(f"🚀 [시스템] 티스토리 자동 업로더를 시작합니다. (오늘 날짜: {today})")
+    print(f"📂 [시스템] 현재 작업 디렉토리: {os.getcwd()}")
+    
+    try:
+        p = sync_playwright().start()
+        print("🌐 [시스템] Playwright 엔진 구동 완료")
+        
+        b = p.chromium.launch(headless=True)
+        print("🌐 [시스템] 브라우저(Chromium) 실행 완료")
+        
+        c = b.new_context()
+    except Exception as e:
+        print(f"❌ [에러] 브라우저 실행 중 치명적 오류: {e}")
         return
 
-    val = raw_cookie.split("TSSESSION=")[1].split(";")[0] if "TSSESSION=" in raw_cookie else raw_cookie
-    c.add_cookies([{"name": "TSSESSION", "value": val, "domain": ".tistory.com", "path": "/"}])
+    # 쿠키 연동
+    raw_cookie = os.environ.get("TISTORY_COOKIE", "").strip()
+    if not raw_cookie:
+        print("⚠️ [주의] TISTORY_COOKIE 환경변수가 비어있습니다. 로그인이 불가능할 수 있습니다.")
+    else:
+        print("✅ [성공] 쿠키(TISTORY_COOKIE) 데이터 로드 완료")
+        val = raw_cookie.split("TSSESSION=")[1].split(";")[0] if "TSSESSION=" in raw_cookie else raw_cookie
+        c.add_cookies([{"name": "TSSESSION", "value": val, "domain": ".tistory.com", "path": "/"}])
 
     page = c.new_page()
     
-    md_list = glob.glob(f"blog_drafts/{today}/tistory/*.md")
+    # 🔍 원고 리스트 확보
+    search_path = f"blog_drafts/{today}/tistory/*.md"
+    print(f"🔍 [시스템] 원고를 찾는 중: {search_path}")
+    md_list = glob.glob(search_path)
     md_list.sort()
 
     if not md_list:
-        print(f"🏕️ [{today}] 업로드할 티토리 원고가 없습니다.")
+        print(f"🏕️ [{today}] 업로드할 티토리 원고를 찾지 못했습니다. 폴더 경로를 확인해 주세요.")
         b.close()
         p.stop()
         return
 
+    print(f"📝 [시스템] 총 {len(md_list)}개의 원고를 발견했습니다. 업로드를 시작합니다.")
+
     for f in md_list:
-        with open(f, 'r', encoding='utf-8') as fp:
-            raw_text = fp.read()
-        
-        if not raw_text:
-            continue
-
-        # [레이저 파싱]
-        title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
-        content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
-
-        if title_match and content_match:
-            title = title_match.group(1).strip()
-            content = content_match.group(1).strip()
-        else:
-            title = os.path.basename(f)
-            content = raw_text
-
-        print(f"🔥 '{title[:15]}...' 로딩 시작 (초장기 대기 모드)")
-
         try:
-            # 1단계: 글쓰기 페이지 진입 및 넉넉한 대기 (네트워크 유휴 상태까지)
+            with open(f, 'r', encoding='utf-8') as fp:
+                raw_text = fp.read()
+            
+            if not raw_text: continue
+
+            # [레이저 파싱]
+            title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
+            content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
+
+            if title_match and content_match:
+                title = title_match.group(1).strip()
+                content = content_match.group(1).strip()
+            else:
+                title = os.path.basename(f)
+                content = raw_text
+
+            print(f"📤 [전송] '{title[:15]}...' 로딩 중 (30초 대기 모드)")
+
+            # 글쓰기 페이지 진입
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
-            time.sleep(10) # 깃허브 서버를 위한 추가 10초 휴식
+            time.sleep(5)
 
             if "login" in page.url:
-                print("❌ 쿠키 만료: 로그인이 필요함.")
+                print(f"❌ '{title[:15]}' 실패: 쿠키가 만료되었습니다. (로그인 페이지로 리다이렉트됨)")
                 break
 
-            # 2단계: 제목 및 에디터 로딩 대기
+            # 제목 및 본문 주입
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
             
-            # 마크다운 모드 전환
             page.locator('#editor-mode-layer-btn-open').click(force=True)
             page.locator('#editor-mode-markdown').click(force=True)
-            time.sleep(5)
-
-            # 본문 주입 (에디터 뇌에 꽂기)
-            safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
-            page.evaluate(f"if(document.querySelector('.CodeMirror')) document.querySelector('.CodeMirror').CodeMirror.setValue(`{safe_content}`);")
             time.sleep(3)
 
-            # 🚨 [최종 조작] "저장" 혹은 "임시저장" 버튼을 찾을 때까지 끈질기게 시도
-            # JavaScript로 직접 버튼 텍스트를 검색하여 클릭 (가장 확실함)
+            safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
+            page.evaluate(f"if(document.querySelector('.CodeMirror')) document.querySelector('.CodeMirror').CodeMirror.setValue(`{safe_content}`);")
+            time.sleep(2)
+
+            # 저장 버튼 클릭 (JS 방식)
             clicked = page.evaluate("""() => {
                 const buttons = Array.from(document.querySelectorAll('button'));
                 const saveBtn = buttons.find(b => b.innerText.includes('저장') || b.classList.contains('btn_save') || b.id.includes('save'));
-                if (saveBtn) {
-                    saveBtn.click();
-                    return true;
-                }
+                if (saveBtn) { saveBtn.click(); return true; }
                 return false;
             }""")
 
             if not clicked:
-                # 위 방식 실패 시 전통적인 Playwright 방식으로 한 번 더 시도
-                page.locator('button:has-text("저장"), button.btn_save, button.btn-draft').first.click(force=True)
+                page.locator('button:has-text("저장"), button.btn_save').first.click(force=True)
             
-            print(f"✅ 임시저장 클릭 성공: {title[:20]}...")
-            time.sleep(10) # 서버 전송 대기
+            print(f"✅ [완료] 임시저장 성공: {title[:20]}...")
+            time.sleep(5)
 
         except Exception as e:
-            print(f"❌ '{title[:15]}' 실패 상세: {e}")
+            print(f"❌ '{f}' 처리 중 개별 오류 발생: {e}")
 
     b.close()
     p.stop()
-    print("🏁 티스토리 업로드 작업을 모두 마쳤습니다.")
+    print("🏁 [종료] 모든 티스토리 업로드 작업을 완료했습니다.")
+
+if __name__ == "__main__":
+    try:
+        go()
+    except Exception as main_e:
+        print(f"🔥 [치명적 에러] 메인 함수 실행 중단: {main_e}")
