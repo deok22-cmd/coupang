@@ -12,13 +12,13 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    print(f"🚀 [시스템] 티스토리 자동 업로더 '인간 위장' 모드를 시작합니다. ({today})")
+    print(f"🚀 [시스템] 티스토리 자동 업로더 '최종 인간 위장' 모드를 시작합니다. ({today})")
     
     try:
         p = sync_playwright().start()
         b = p.chromium.launch(headless=True)
         c = b.new_context()
-        print("🌐 [시스템] 브라우저 가동")
+        print("🌐 [시스템] 브라우저 구동 완료")
     except Exception as e:
         print(f"❌ [에러] 브라우저 실행 문제: {e}")
         return
@@ -45,21 +45,27 @@ def go():
         p.stop()
         return
 
-    for f in md_list:
+    print(f"📝 [시스템] 총 {len(md_list)}개의 원고 작업 시작!")
+
+    for f_path in md_list:
         try:
-            with open(f, 'r', encoding='utf-8') as fp:
+            with open(f_path, 'r', encoding='utf-8') as fp:
                 raw_text = fp.read()
             if not raw_text: continue
 
             # 파싱
             title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
             content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
-            title = title_match.group(1).strip() if title_match else os.path.basename(f)
+            title = title_match.group(1).strip() if title_match else os.path.basename(f_path)
             content = content_match.group(1).strip() if content_match else raw_text
 
-            print(f"📤 [진행] '{title[:15]}...' 전송 시작")
+            print(f"📤 [진행] '{title[:15]}...' 로딩 중")
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
             time.sleep(10)
+
+            if "login" in page.url:
+                print(f"❌ '{title[:15]}' 실패: 쿠키 만료")
+                break
 
             # 제목 입력
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
@@ -79,28 +85,23 @@ def go():
                 time.sleep(5)
             except: pass
 
-            # 🛠️ [미션: 본문 위장 주입]
-            print("🎯 [공략] 키보드 시뮬레이션으로 본문을 주입합니다.")
+            # 🛠️ [본문 위장 주입]
+            print("🎯 [공략] 물리적 키보드 위장 입력을 시도합니다.")
             
-            # 에디터 영역 클릭 (포커스 잡기)
-            editor_area = page.locator('.CodeMirror, #editor-markdown, .tt_article_content').first
+            # 1. 에디터 클릭 및 초기화
+            editor_area = page.locator('.CodeMirror, #editor-markdown, #ke_editor_get_content').first
             editor_area.click()
             time.sleep(1)
             
-            # 1단계: 기존 자바스크립트 주입 (백업용)
-            page.evaluate("(text) => { if(window.CodeMirror) document.querySelector('.CodeMirror').CodeMirror.setValue(text); }", content)
-            
-            # 2단계: 키보드로 낱낱이 입력 시뮬레이션 (인간처럼 보이게 하기)
-            # 전체 선택후 지우기 (초기화)
+            # 2. 물리적 삭제 및 텍스트 꽂기
             page.keyboard.press("Control+A")
             page.keyboard.press("Backspace")
-            # 내용 꽂기 (Paste 시뮬레이션)
+            time.sleep(1)
             page.keyboard.insert_text(content)
             
-            # 3단계: 마지막에 엔터 한 번 더 쳐서 이벤트 발생시킴
+            # 3. 이벤트 발생
             page.keyboard.press("Enter")
-            
-            print("✅ 본문 주입 시도 완료. 동기화 대기 중...")
+            print("✅ 본문 주입 완료 (물리적 시뮬레이션)")
             time.sleep(10)
 
             # 저장/발행
@@ -113,21 +114,27 @@ def go():
             }""")
 
             if res.get('ok'):
-                time.sleep(1)
+                time.sleep(2)
                 if "완료" in res['msg'] or "발행" in res['msg']:
                     page.evaluate("if(document.getElementById('open20')) document.getElementById('open20').click();")
                     page.locator('button#publish-btn, button:has-text("발행")').first.click(force=True)
-                    print(f"✅ OK: 발행 성공 ({title[:10]})")
+                    print(f"✅ OK: 발행 성공")
                 else:
-                    print(f"✅ OK: 임시저장 성공 ({title[:10]})")
+                    print(f"✅ OK: 임시저장 성공")
             else:
                 page.keyboard.press("Enter")
 
             time.sleep(5) 
 
-        except Exception as e:
-            print(f"❌ '{f}' 개별 오류: {e}")
+        except Exception as item_e:
+            print(f"❌ 개별 작업 중 오류 발생: {item_e}")
 
     b.close()
     p.stop()
-    print("🏁 [종료] 모든 작업을 마쳤습니다.")
+    print("🏁 [최종] 모든 작업을 무사히 마쳤습니다.")
+
+if __name__ == "__main__":
+    try:
+        go()
+    except Exception as main_e:
+        print(f"🔥 치명적 시스템 오류: {main_e}")
