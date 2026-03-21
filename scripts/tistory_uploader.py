@@ -12,45 +12,35 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    print(f"🚀 [시스템] 티스토리 자동 업로더를 시작합니다. (오늘 날짜: {today})")
-    print(f"📂 [시스템] 현재 작업 디렉토리: {os.getcwd()}")
+    print(f"🚀 [시스템] 티스토리 자동 업로더 정밀 모드를 시작합니다. ({today})")
     
     try:
         p = sync_playwright().start()
-        print("🌐 [시스템] Playwright 엔진 구동 완료")
-        
         b = p.chromium.launch(headless=True)
-        print("🌐 [시스템] 브라우저(Chromium) 실행 완료")
-        
         c = b.new_context()
     except Exception as e:
-        print(f"❌ [에러] 브라우저 실행 중 치명적 오류: {e}")
+        print(f"❌ [에러] 브라우저 실행 문제: {e}")
         return
 
     # 쿠키 연동
     raw_cookie = os.environ.get("TISTORY_COOKIE", "").strip()
     if not raw_cookie:
-        print("⚠️ [주의] TISTORY_COOKIE 환경변수가 비어있습니다. 로그인이 불가능할 수 있습니다.")
+        print("⚠️ [주의] 쿠키 데이터 없음")
     else:
-        print("✅ [성공] 쿠키(TISTORY_COOKIE) 데이터 로드 완료")
         val = raw_cookie.split("TSSESSION=")[1].split(";")[0] if "TSSESSION=" in raw_cookie else raw_cookie
         c.add_cookies([{"name": "TSSESSION", "value": val, "domain": ".tistory.com", "path": "/"}])
 
     page = c.new_page()
     
-    # 🔍 원고 리스트 확보
-    search_path = f"blog_drafts/{today}/tistory/*.md"
-    print(f"🔍 [시스템] 원고를 찾는 중: {search_path}")
-    md_list = glob.glob(search_path)
+    # 원고 리스트 확보
+    md_list = glob.glob(f"blog_drafts/{today}/tistory/*.md")
     md_list.sort()
 
     if not md_list:
-        print(f"🏕️ [{today}] 업로드할 티토리 원고를 찾지 못했습니다. 폴더 경로를 확인해 주세요.")
+        print(f"🏕️ [{today}] 업로드할 티토리 원고가 없습니다.")
         b.close()
         p.stop()
         return
-
-    print(f"📝 [시스템] 총 {len(md_list)}개의 원고를 발견했습니다. 업로드를 시작합니다.")
 
     for f in md_list:
         try:
@@ -63,58 +53,84 @@ def go():
             title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
             content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
 
-            if title_match and content_match:
-                title = title_match.group(1).strip()
-                content = content_match.group(1).strip()
-            else:
-                title = os.path.basename(f)
-                content = raw_text
+            title = title_match.group(1).strip() if title_match else os.path.basename(f)
+            content = content_match.group(1).strip() if content_match else raw_text
 
-            print(f"📤 [전송] '{title[:15]}...' 로딩 중 (30초 대기 모드)")
+            print(f"📤 [준비] '{title[:15]}...' 전송 대기 중")
 
             # 글쓰기 페이지 진입
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
-            time.sleep(5)
+            time.sleep(7) # 로딩 안정화 대기
 
             if "login" in page.url:
-                print(f"❌ '{title[:15]}' 실패: 쿠키가 만료되었습니다. (로그인 페이지로 리다이렉트됨)")
+                print(f"❌ '{title[:15]}' 실패: 쿠키가 만료되었습니다.")
                 break
 
-            # 제목 및 본문 주입
-            page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
-            page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
+            # 제목 입력
+            title_area = page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first
+            title_area.wait_for(timeout=30000)
+            title_area.fill(title)
             
-            page.locator('#editor-mode-layer-btn-open').click(force=True)
-            page.locator('#editor-mode-markdown').click(force=True)
-            time.sleep(3)
+            # 🛠️ 마크다운 모드 전환
+            try:
+                page.locator('#editor-mode-layer-btn-open').click(force=True)
+                page.locator('#editor-mode-markdown').click(force=True)
+                time.sleep(3)
+            except:
+                print("⚠️ 모드 전환 스킵 (이미 마크다운일 수 있습니다.)")
 
+            # 본문 주입
             safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
             page.evaluate(f"if(document.querySelector('.CodeMirror')) document.querySelector('.CodeMirror').CodeMirror.setValue(`{safe_content}`);")
+            time.sleep(3)
+
+            # 🚨 [임시저장 타격] 가장 강력한 셀렉터 시도
+            # 1. 화면 맨 아래로 스크롤 (버튼 활성화 유도)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
 
-            # 저장 버튼 클릭 (JS 방식)
-            clicked = page.evaluate("""() => {
-                const buttons = Array.from(document.querySelectorAll('button'));
-                const saveBtn = buttons.find(b => b.innerText.includes('저장') || b.classList.contains('btn_save') || b.id.includes('save'));
-                if (saveBtn) { saveBtn.click(); return true; }
-                return false;
-            }""")
+            # 2. 버튼 찾기 및 클릭 (임시저장, 저장 순)
+            # 티스토리 에디터 하단 버튼들을 다각도로 탐색
+            save_selectors = [
+                'button:has-text("임시저장")', 
+                'button.btn_save', 
+                'button:has-text("저장")',
+                'button.btn_item.btn_save',
+                'button.btn-draft'
+            ]
+            
+            clicked = False
+            for selector in save_selectors:
+                try:
+                    btn = page.locator(selector).first
+                    if btn.is_visible():
+                        btn.click(force=True)
+                        clicked = True
+                        print(f"✅ [성공] 임시저장 완료 (방식: {selector})")
+                        break
+                except:
+                    continue
 
             if not clicked:
-                page.locator('button:has-text("저장"), button.btn_save').first.click(force=True)
-            
-            print(f"✅ [완료] 임시저장 성공: {title[:20]}...")
-            time.sleep(5)
+                # 마지막 필살기: 모든 'button' 중 '저장' 글자가 포함된 것 클릭
+                result = page.evaluate("""() => {
+                    const b = Array.from(document.querySelectorAll('button')).find(el => el.innerText.includes('저장'));
+                    if (b) { b.click(); return true; }
+                    return false;
+                }""")
+                if result:
+                    print("✅ [성공] 임시저장 완료 (Javascript 강제 클릭)")
+                else:
+                    print(f"❌ '{title[:15]}' 실패: 저장 버튼을 도저히 찾을 수 없습니다.")
+
+            time.sleep(10) # 서버 저장 완료 대기
 
         except Exception as e:
-            print(f"❌ '{f}' 처리 중 개별 오류 발생: {e}")
+            print(f"❌ '{f}' 개별 오류: {e}")
 
     b.close()
     p.stop()
-    print("🏁 [종료] 모든 티스토리 업로드 작업을 완료했습니다.")
+    print("🏁 [종료] 모든 작업을 완료했습니다.")
 
 if __name__ == "__main__":
-    try:
-        go()
-    except Exception as main_e:
-        print(f"🔥 [치명적 에러] 메인 함수 실행 중단: {main_e}")
+    go()
