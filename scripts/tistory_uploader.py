@@ -12,7 +12,7 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    print(f"🚀 [시스템] 티스토리 자동 업로더 '무적 무력 돌파' 모드를 시작합니다. ({today})")
+    print(f"🚀 [시스템] 티스토리 자동 업로더 '본문 완벽 주입' 모드를 시작합니다. ({today})")
     
     try:
         p = sync_playwright().start()
@@ -35,17 +35,14 @@ def go():
     
     # 원고 리스트 확보
     search_path = f"blog_drafts/{today}/tistory/*.md"
-    print(f"🔍 [시스템] 원고 찾는 중: {search_path}")
     md_list = glob.glob(search_path)
     md_list.sort()
 
     if not md_list:
-        print(f"🏕️ [{today}] 원고를 찾지 못했습니다. 현재 디렉토리: {os.getcwd()}")
+        print(f"🏕️ [{today}] 원고를 찾지 못했습니다.")
         b.close()
         p.stop()
         return
-
-    print(f"📝 [시스템] 총 {len(md_list)}개의 원고 발견. 작업 시작!")
 
     for f in md_list:
         try:
@@ -53,14 +50,13 @@ def go():
                 raw_text = fp.read()
             if not raw_text: continue
 
-            # [레이저 파싱]
+            # [정규식 파싱]
             title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
             content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
             title = title_match.group(1).strip() if title_match else os.path.basename(f)
             content = content_match.group(1).strip() if content_match else raw_text
 
-            print(f"📤 [전송 대기] '{title[:15]}...' 로딩 시작")
-            # 글쓰기 페이지 진입
+            print(f"📤 [작업 중] '{title[:15]}...' 본문 주입 중")
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
             time.sleep(10)
 
@@ -68,63 +64,82 @@ def go():
                 print(f"❌ '{title[:15]}' 실패: 쿠키 만료")
                 break
 
-            # 제목 입력
+            # 1. 제목 입력
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
             
-            # 모드 전환 (마크다운)
+            # 2. 마크다운 모드 전환 (강화된 방식)
             try:
-                page.locator('#editor-mode-layer-btn-open').click(force=True)
-                page.locator('#editor-mode-markdown').click(force=True)
-                time.sleep(3)
+                # 상단 모드 메뉴 클릭
+                page.evaluate("""() => {
+                    const btns = Array.from(document.querySelectorAll('button'));
+                    const modeBtn = btns.find(b => b.innerText.includes('모드') || b.id.includes('editor-mode'));
+                    if (modeBtn) modeBtn.click();
+                }""")
+                time.sleep(1)
+                # 마크다운 항목 클릭
+                page.evaluate("""() => {
+                    const items = Array.from(document.querySelectorAll('li, a, button'));
+                    const mdItem = items.find(i => i.innerText.includes('마크다운') || i.innerText.includes('Markdown'));
+                    if (mdItem) mdItem.click();
+                }""")
+                time.sleep(5)
             except: pass
 
-            # 본문 주입
+            # 3. 본문 주입 (강력한 3단계 주입)
             safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
-            page.evaluate(f"if(document.querySelector('.CodeMirror')) document.querySelector('.CodeMirror').CodeMirror.setValue(`{safe_content}`);")
-            time.sleep(5)
+            injected = page.evaluate(f"""() => {{
+                // 방법 1: CodeMirror (마크다운 에디터)
+                const cmNode = document.querySelector('.CodeMirror');
+                if (cmNode && cmNode.CodeMirror) {{
+                    cmNode.CodeMirror.setValue(`{safe_content}`);
+                    return "CODEMIRROR";
+                }}
+                // 방법 2: 표준 Textarea
+                const ta = document.querySelector('textarea.textarea_input') || document.querySelector('#editor-markdown');
+                if (ta) {{
+                    ta.value = `{safe_content}`;
+                    return "TEXTAREA";
+                }}
+                // 방법 3: ContentEditable (기본 모드)
+                const ce = document.querySelector('.tt_article_content [contenteditable="true"]') || document.querySelector('#ke_editor_get_content');
+                if (ce) {{
+                    ce.innerText = `{safe_content}`;
+                    return "CONTENTEDITABLE";
+                }}
+                return "FAIL";
+            }}""")
+            
+            print(f"🎯 [에디터] 본문 주입 방식: {injected}")
+            time.sleep(3)
 
-            # 🚨 [임시저장/발행 무력 돌파] 
-            print("🎯 [조준] 모든 저장 버튼을 직접 검색합니다.")
+            # 4. 저장/발행 무력 돌파
             result_data = page.evaluate("""() => {
                 const b_list = Array.from(document.querySelectorAll('button'));
                 let target = b_list.find(b => b.innerText.includes('임시저장') || b.innerText.includes('저장'));
-                if (!target) {
-                    target = b_list.find(b => b.innerText.includes('완료') || b.innerText.includes('발행'));
-                }
+                if (!target) target = b_list.find(b => b.innerText.includes('완료') || b.innerText.includes('발행'));
                 
-                if (target) {
-                    target.click();
-                    return { ok: true, msg: target.innerText };
-                }
-                return { ok: false, msg: b_list.map(b => b.innerText).join(', ') };
+                if (target) { target.click(); return { ok: true, msg: target.innerText }; }
+                return { ok: false };
             }""")
 
-            if result_data['ok']:
-                print(f"✅ {result_data['msg']} 클릭 완료. 레이어 대기 중...")
+            if result_data.get('ok'):
                 time.sleep(3)
                 if "완료" in result_data['msg'] or "발행" in result_data['msg']:
                     page.evaluate("if(document.getElementById('open20')) document.getElementById('open20').click();")
                     page.locator('button#publish-btn, button:has-text("발행"), button:has-text("등록")').first.click(force=True)
-                    print("✅ [성공] 비공개 발행으로 저장되었습니다.")
+                    print(f"✅ [성공] 비공개 발행 완료: {title[:15]}")
                 else:
-                    print("✅ [성공] 임시저장함에 담겼습니다.")
+                    print(f"✅ [성공] 임시저장 완료: {title[:15]}")
             else:
-                print(f"⚠️ 버튼 발견 실패. (탐지 텍스트: {result_data['msg']})")
+                print(f"⚠️ 저장 버튼 실패. 엔터키 시도")
                 page.keyboard.press("Enter")
-                print("⌨️ [긴급] 엔터키 연타 시도")
 
-            time.sleep(10)
+            time.sleep(1) 
 
         except Exception as e:
-            print(f"❌ '{f}' 개별 오류 상세: {e}")
+            print(f"❌ '{f}' 개별 오류: {e}")
 
     b.close()
     p.stop()
-    print("🏁 [종료] 모든 작업을 안전하게 마쳤습니다.")
-
-if __name__ == "__main__":
-    try:
-        go()
-    except Exception as e:
-        print(f"🔥 [치명적 오류] 실행 도중 정지: {e}")
+    print("🏁 [종료] 모든 작업을 마쳤습니다.")
