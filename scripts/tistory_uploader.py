@@ -12,7 +12,7 @@ today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
     p = sync_playwright().start()
-    b = p.chromium.launch(headless=True) 
+    b = p.chromium.launch(headless=True) # 서버는 headless=True 필수
     c = b.new_context()
 
     # 쿠키 연동 (TSSESSION)
@@ -52,86 +52,56 @@ def go():
             title = title_match.group(1).strip()
             content = content_match.group(1).strip()
         else:
-            print(f"⚠️ '{f}' 파싱 실패. 원문 그대로 시도합니다.")
             title = os.path.basename(f)
             content = raw_text
 
-        print(f"🚀 '{title[:15]}...' 서버 직송 시작!")
+        print(f"🔥 '{title[:15]}...' 로딩 시작 (초장기 대기 모드)")
 
         try:
-            # 1단계: 티스토리 글쓰기 페이지 진입 (신규 에디터 주소 직접 공략)
-            page.goto(f"https://{BLOG_NAME}.tistory.com/manage/newpost/?type=post", wait_until="networkidle")
-            
-            # 로그인 여부 체크
+            # 1단계: 글쓰기 페이지 진입 및 넉넉한 대기 (네트워크 유휴 상태까지)
+            page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
+            time.sleep(10) # 깃허브 서버를 위한 추가 10초 휴식
+
             if "login" in page.url:
-                print("❌ 실패: 쿠키가 만료되었습니다.")
+                print("❌ 쿠키 만료: 로그인이 필요함.")
                 break
 
-            # 🚨 [저인망 토큰 탈취] 모든 가능성 탐색
-            token = None
-            for _ in range(12): # 최대 12초 대기
-                # 방법 1: 표준 hidden input (access_token)
-                token = page.evaluate("""() => {
-                    return document.querySelector('input[name="access_token"]')?.value || 
-                           document.querySelector('input[name="csrfToken"]')?.value ||
-                           window.TISTORY_VARS?.access_token ||
-                           window.T?.config?.TOKEN || 
-                           window.T?.config?.access_token ||
-                           "";
-                }""")
-                
-                if token: break
-                time.sleep(1)
-
-            if not token:
-                print("❌ 실패: 보안 토큰(CSRF)을 찾을 수 없습니다. (데이터 분석 중...)")
-                # 실패 시 페이지 내 모든 hidden input 이름이라도 출력 (디버깅용)
-                inputs = page.evaluate("() => Array.from(document.querySelectorAll('input[type=hidden]')).map(i => i.name).join(', ')")
-                print(f"   탐지된 히든 필드 목록: [{inputs}]")
-                continue
-
-            # 2단계: 서버로 직접 전송 (API 공격 방식)
-            safe_title = title.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
-            safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
-
-            save_js = f"""
-            (async () => {{
-                try {{
-                    const formData = new FormData();
-                    formData.append('title', `{safe_title}`);
-                    formData.append('content', `{safe_content}`);
-                    formData.append('visibility', '0'); 
-                    formData.append('categoryId', '0');
-                    formData.append('access_token', '{token}');
-
-                    const res = await fetch('/manage/post/save', {{
-                        method: 'POST',
-                        body: formData
-                    }});
-                    const text = await res.text();
-                    // 성공 시 JSON 형태로 URL 등이 포함되어 돌아옴
-                    return res.ok ? "SUCCESS" : "FAIL:" + text;
-                }} catch (e) {{
-                    return e.toString();
-                }}
-            }})();
-            """
-
-            result = page.evaluate(save_js)
+            # 2단계: 제목 및 에디터 로딩 대기
+            page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
+            page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
             
-            if result == "SUCCESS":
-                print(f"✅ 저장 성공: {title[:20]}...")
-            else:
-                print(f"❌ 오류 상세: {result}")
-
+            # 마크다운 모드 전환
+            page.locator('#editor-mode-layer-btn-open').click(force=True)
+            page.locator('#editor-mode-markdown').click(force=True)
             time.sleep(5)
 
+            # 본문 주입 (에디터 뇌에 꽂기)
+            safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
+            page.evaluate(f"if(document.querySelector('.CodeMirror')) document.querySelector('.CodeMirror').CodeMirror.setValue(`{safe_content}`);")
+            time.sleep(3)
+
+            # 🚨 [최종 조작] "저장" 혹은 "임시저장" 버튼을 찾을 때까지 끈질기게 시도
+            # JavaScript로 직접 버튼 텍스트를 검색하여 클릭 (가장 확실함)
+            clicked = page.evaluate("""() => {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const saveBtn = buttons.find(b => b.innerText.includes('저장') || b.classList.contains('btn_save') || b.id.includes('save'));
+                if (saveBtn) {
+                    saveBtn.click();
+                    return true;
+                }
+                return false;
+            }""")
+
+            if not clicked:
+                # 위 방식 실패 시 전통적인 Playwright 방식으로 한 번 더 시도
+                page.locator('button:has-text("저장"), button.btn_save, button.btn-draft').first.click(force=True)
+            
+            print(f"✅ 임시저장 클릭 성공: {title[:20]}...")
+            time.sleep(10) # 서버 전송 대기
+
         except Exception as e:
-            print(f"❌ 시스템 통신 오류: {e}")
+            print(f"❌ '{title[:15]}' 실패 상세: {e}")
 
     b.close()
     p.stop()
     print("🏁 티스토리 업로드 작업을 모두 마쳤습니다.")
-
-if __name__ == "__main__":
-    go()
