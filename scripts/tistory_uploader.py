@@ -12,13 +12,13 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    print(f"🚀 [시스템] 티스토리 자동 업로더 '무지개 반사' 모드를 시작합니다. ({today})")
+    print(f"🚀 [시스템] 티스토리 자동 업로더 '인간 위장' 모드를 시작합니다. ({today})")
     
     try:
         p = sync_playwright().start()
         b = p.chromium.launch(headless=True)
         c = b.new_context()
-        print("🌐 [시스템] 브라우저 엔진 가동 완료")
+        print("🌐 [시스템] 브라우저 가동")
     except Exception as e:
         print(f"❌ [에러] 브라우저 실행 문제: {e}")
         return
@@ -26,7 +26,7 @@ def go():
     # 쿠키 연동
     raw_cookie = os.environ.get("TISTORY_COOKIE", "").strip()
     if not raw_cookie:
-        print("⚠️ [주의] 쿠키 없음")
+        print("⚠️ [주의] 쿠키 데이터 없음")
     else:
         print("✅ [성공] 쿠키 로드 완료")
         val = raw_cookie.split("TSSESSION=")[1].split(";")[0] if "TSSESSION=" in raw_cookie else raw_cookie
@@ -45,21 +45,19 @@ def go():
         p.stop()
         return
 
-    print(f"📝 [시스템] 총 {len(md_list)}개의 원고 발견. 작업 시작!")
-
     for f in md_list:
         try:
             with open(f, 'r', encoding='utf-8') as fp:
                 raw_text = fp.read()
             if not raw_text: continue
 
-            # [정규식 파싱]
+            # 파싱
             title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
             content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
             title = title_match.group(1).strip() if title_match else os.path.basename(f)
             content = content_match.group(1).strip() if content_match else raw_text
 
-            print(f"📤 [작업 중] '{title[:15]}...' 로딩 시작")
+            print(f"📤 [진행] '{title[:15]}...' 전송 시작")
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
             time.sleep(10)
 
@@ -67,7 +65,7 @@ def go():
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
             
-            # 마크다운 전환
+            # 마크다운 모드 전환
             try:
                 page.evaluate("""() => {
                     const b = Array.from(document.querySelectorAll('button')).find(el => el.innerText.includes('모드'));
@@ -81,24 +79,28 @@ def go():
                 time.sleep(5)
             except: pass
 
-            # 🛠️ 본문 안전 주입 (인자 전달 방식)
-            injected = page.evaluate("""(text) => {
-                const cmNode = document.querySelector('.CodeMirror');
-                if (cmNode && cmNode.CodeMirror) {
-                    cmNode.CodeMirror.setValue(text);
-                    cmNode.CodeMirror.focus();
-                    return "CODEMIRROR";
-                }
-                const ta = document.querySelector('textarea.textarea_input') || document.querySelector('#editor-markdown');
-                if (ta) {
-                    ta.value = text;
-                    ta.dispatchEvent(new Event('input', { bubbles: true }));
-                    return "TEXTAREA";
-                }
-                return "FAIL";
-            }""", content)
-            print(f"🎯 [에디터] 본문 주입 방식: {injected}")
+            # 🛠️ [미션: 본문 위장 주입]
+            print("🎯 [공략] 키보드 시뮬레이션으로 본문을 주입합니다.")
             
+            # 에디터 영역 클릭 (포커스 잡기)
+            editor_area = page.locator('.CodeMirror, #editor-markdown, .tt_article_content').first
+            editor_area.click()
+            time.sleep(1)
+            
+            # 1단계: 기존 자바스크립트 주입 (백업용)
+            page.evaluate("(text) => { if(window.CodeMirror) document.querySelector('.CodeMirror').CodeMirror.setValue(text); }", content)
+            
+            # 2단계: 키보드로 낱낱이 입력 시뮬레이션 (인간처럼 보이게 하기)
+            # 전체 선택후 지우기 (초기화)
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            # 내용 꽂기 (Paste 시뮬레이션)
+            page.keyboard.insert_text(content)
+            
+            # 3단계: 마지막에 엔터 한 번 더 쳐서 이벤트 발생시킴
+            page.keyboard.press("Enter")
+            
+            print("✅ 본문 주입 시도 완료. 동기화 대기 중...")
             time.sleep(10)
 
             # 저장/발행
@@ -111,26 +113,21 @@ def go():
             }""")
 
             if res.get('ok'):
-                time.sleep(3)
+                time.sleep(1)
                 if "완료" in res['msg'] or "발행" in res['msg']:
                     page.evaluate("if(document.getElementById('open20')) document.getElementById('open20').click();")
                     page.locator('button#publish-btn, button:has-text("발행")').first.click(force=True)
-                    print(f"✅ [성공] 발행 완료: {title[:15]}")
+                    print(f"✅ OK: 발행 성공 ({title[:10]})")
                 else:
-                    print(f"✅ [성공] 임시저장 완료: {title[:15]}")
+                    print(f"✅ OK: 임시저장 성공 ({title[:10]})")
             else:
                 page.keyboard.press("Enter")
-                print("⌨️ [긴급] 엔터 시도")
 
             time.sleep(5) 
 
         except Exception as e:
-            print(f"❌ '{f}' 개별 오류 상세: {e}")
+            print(f"❌ '{f}' 개별 오류: {e}")
 
     b.close()
     p.stop()
-    print("🏁 [종료] 작업을 마쳤습니다.")
-
-if __name__ == "__main__":
-    try: go()
-    except Exception as e: print(f"🔥 치명적 오류: {e}")
+    print("🏁 [종료] 모든 작업을 마쳤습니다.")
