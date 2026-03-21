@@ -12,7 +12,7 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    print(f"🚀 [시스템] 티스토리 자동 업로더 '본문 집중' 모드를 시작합니다. ({today})")
+    print(f"🚀 [시스템] 티스토리 자동 업로더 '무지개 반사' 모드를 시작합니다. ({today})")
     
     try:
         p = sync_playwright().start()
@@ -26,7 +26,7 @@ def go():
     # 쿠키 연동
     raw_cookie = os.environ.get("TISTORY_COOKIE", "").strip()
     if not raw_cookie:
-        print("⚠️ [주의] 쿠키 데이터 없음")
+        print("⚠️ [주의] 쿠키 없음")
     else:
         print("✅ [성공] 쿠키 로드 완료")
         val = raw_cookie.split("TSSESSION=")[1].split(";")[0] if "TSSESSION=" in raw_cookie else raw_cookie
@@ -45,6 +45,8 @@ def go():
         p.stop()
         return
 
+    print(f"📝 [시스템] 총 {len(md_list)}개의 원고 발견. 작업 시작!")
+
     for f in md_list:
         try:
             with open(f, 'r', encoding='utf-8') as fp:
@@ -57,19 +59,15 @@ def go():
             title = title_match.group(1).strip() if title_match else os.path.basename(f)
             content = content_match.group(1).strip() if content_match else raw_text
 
-            print(f"📤 [작업 중] '{title[:15]}...' 전송 시작")
+            print(f"📤 [작업 중] '{title[:15]}...' 로딩 시작")
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
             time.sleep(10)
 
-            if "login" in page.url:
-                print(f"❌ '{title[:15]}' 실패: 쿠키 만료")
-                break
-
-            # 1. 제목 입력
+            # 제목 입력
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
             
-            # 2. 마크다운 모드 전환
+            # 마크다운 전환
             try:
                 page.evaluate("""() => {
                     const b = Array.from(document.querySelectorAll('button')).find(el => el.innerText.includes('모드'));
@@ -83,31 +81,27 @@ def go():
                 time.sleep(5)
             except: pass
 
-            # 3. 본문 정밀 주입 및 동기화
-            safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
-            injected = page.evaluate(f"""() => {{
-                // 방법 1: CodeMirror
+            # 🛠️ 본문 안전 주입 (인자 전달 방식)
+            injected = page.evaluate("""(text) => {
                 const cmNode = document.querySelector('.CodeMirror');
-                if (cmNode && cmNode.CodeMirror) {{
-                    cmNode.CodeMirror.setValue(`{safe_content}`);
+                if (cmNode && cmNode.CodeMirror) {
+                    cmNode.CodeMirror.setValue(text);
                     cmNode.CodeMirror.focus();
                     return "CODEMIRROR";
-                }}
-                // 방법 2: Textarea
+                }
                 const ta = document.querySelector('textarea.textarea_input') || document.querySelector('#editor-markdown');
-                if (ta) {{
-                    ta.value = `{safe_content}`;
-                    ta.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                if (ta) {
+                    ta.value = text;
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
                     return "TEXTAREA";
-                }}
+                }
                 return "FAIL";
-            }}""")
+            }""", content)
             print(f"🎯 [에디터] 본문 주입 방식: {injected}")
             
-            # 🚨 본문이 완전히 저장되기 위해 넉넉히 대기
             time.sleep(10)
 
-            # 4. 저장/발행
+            # 저장/발행
             res = page.evaluate("""() => {
                 const b_list = Array.from(document.querySelectorAll('button'));
                 let target = b_list.find(b => b.innerText.includes('임시저장') || b.innerText.includes('저장'));
@@ -121,11 +115,12 @@ def go():
                 if "완료" in res['msg'] or "발행" in res['msg']:
                     page.evaluate("if(document.getElementById('open20')) document.getElementById('open20').click();")
                     page.locator('button#publish-btn, button:has-text("발행")').first.click(force=True)
-                    print(f"✅ [성공] 비공개 발행 상세: {title[:15]}")
+                    print(f"✅ [성공] 발행 완료: {title[:15]}")
                 else:
-                    print(f"✅ [성공] 임시저장 상세: {title[:15]}")
+                    print(f"✅ [성공] 임시저장 완료: {title[:15]}")
             else:
                 page.keyboard.press("Enter")
+                print("⌨️ [긴급] 엔터 시도")
 
             time.sleep(5) 
 
@@ -134,4 +129,8 @@ def go():
 
     b.close()
     p.stop()
-    print("🏁 [종료] 모든 티스토리 업로드 작업을 완료했습니다.")
+    print("🏁 [종료] 작업을 마쳤습니다.")
+
+if __name__ == "__main__":
+    try: go()
+    except Exception as e: print(f"🔥 치명적 오류: {e}")
