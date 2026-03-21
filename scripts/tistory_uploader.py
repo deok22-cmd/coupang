@@ -52,43 +52,45 @@ def go():
             title = title_match.group(1).strip()
             content = content_match.group(1).strip()
         else:
-            print(f"⚠️ '{f}' 태그 파셔 실패. 원문 그대로 시도합니다.")
+            print(f"⚠️ '{f}' 파싱 실패. 원문 그대로 시도합니다.")
             title = os.path.basename(f)
             content = raw_text
 
         print(f"🚀 '{title[:15]}...' 서버 직송 시작!")
 
         try:
-            # 1단계: 티스토리 글쓰기 페이지 진입 (확실한 주소 사용)
-            page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post?category=0", wait_until="networkidle")
+            # 1단계: 티스토리 글쓰기 페이지 진입 (신규 에디터 주소 직접 공략)
+            page.goto(f"https://{BLOG_NAME}.tistory.com/manage/newpost/?type=post", wait_until="networkidle")
             
-            # 로그인 여부 체크 (한 번 더)
+            # 로그인 여부 체크
             if "login" in page.url:
                 print("❌ 실패: 쿠키가 만료되었습니다.")
                 break
 
-            # 🚨 [중요] 토큰이 로딩될 때까지 기다림 + 다양한 셀렉터 시도
+            # 🚨 [저인망 토큰 탈취] 모든 가능성 탐색
             token = None
-            for _ in range(10): # 최대 10초 대기
-                # 1. input 요소 찾기
-                token_input = page.locator('input[name="access_token"]').first
-                if token_input.count() > 0:
-                    token = token_input.get_attribute('value')
-                
-                # 2. 혹은 자바스크립트 변수에서 직접 긁기
-                if not token:
-                    token = page.evaluate("window.TISTORY_VARS?.access_token || ''")
+            for _ in range(12): # 최대 12초 대기
+                # 방법 1: 표준 hidden input (access_token)
+                token = page.evaluate("""() => {
+                    return document.querySelector('input[name="access_token"]')?.value || 
+                           document.querySelector('input[name="csrfToken"]')?.value ||
+                           window.TISTORY_VARS?.access_token ||
+                           window.T?.config?.TOKEN || 
+                           window.T?.config?.access_token ||
+                           "";
+                }""")
                 
                 if token: break
                 time.sleep(1)
 
             if not token:
-                print("❌ 실패: 보안 토큰(CSRF)을 찾을 수 없습니다. (로딩 지연)")
-                # 디버깅을 위해 현재 URL 출력
-                print(f"   현재 페이지: {page.url}")
+                print("❌ 실패: 보안 토큰(CSRF)을 찾을 수 없습니다. (데이터 분석 중...)")
+                # 실패 시 페이지 내 모든 hidden input 이름이라도 출력 (디버깅용)
+                inputs = page.evaluate("() => Array.from(document.querySelectorAll('input[type=hidden]')).map(i => i.name).join(', ')")
+                print(f"   탐지된 히든 필드 목록: [{inputs}]")
                 continue
 
-            # 2단계: 서버로 직접 쏘기
+            # 2단계: 서버로 직접 전송 (API 공격 방식)
             safe_title = title.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
             safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
 
@@ -107,6 +109,7 @@ def go():
                         body: formData
                     }});
                     const text = await res.text();
+                    // 성공 시 JSON 형태로 URL 등이 포함되어 돌아옴
                     return res.ok ? "SUCCESS" : "FAIL:" + text;
                 }} catch (e) {{
                     return e.toString();
@@ -119,7 +122,7 @@ def go():
             if result == "SUCCESS":
                 print(f"✅ 저장 성공: {title[:20]}...")
             else:
-                print(f"❌ 오류: {result}")
+                print(f"❌ 오류 상세: {result}")
 
             time.sleep(5)
 
