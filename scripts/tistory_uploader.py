@@ -15,7 +15,7 @@ def go():
     b = p.chromium.launch(headless=True) 
     c = b.new_context()
 
-    # 쿠키 연동 (TSSESSION 기반)
+    # 쿠키 연동 (TSSESSION)
     raw_cookie = os.environ.get("TISTORY_COOKIE", "").strip()
     if not raw_cookie:
         print("⚠️ TISTORY_COOKIE 환경변수가 비어있습니다.")
@@ -28,7 +28,6 @@ def go():
 
     page = c.new_page()
     
-    # 2. 업로드할 원고 리스트 확보 (Markdown 파일)
     md_list = glob.glob(f"blog_drafts/{today}/tistory/*.md")
     md_list.sort()
 
@@ -45,7 +44,7 @@ def go():
         if not raw_text:
             continue
 
-        # 🚨 [레이저 파싱] 제목과 본문 섹션 분리
+        # [레이저 파싱]
         title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
         content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
 
@@ -53,26 +52,46 @@ def go():
             title = title_match.group(1).strip()
             content = content_match.group(1).strip()
         else:
-            print(f"⚠️ '{f}' 태그 파싱 실패. 원고 구조를 확인하세요.")
-            continue
+            print(f"⚠️ '{f}' 태그 파셔 실패. 원문 그대로 시도합니다.")
+            title = os.path.basename(f)
+            content = raw_text
 
         print(f"🚀 '{title[:15]}...' 서버 직송 시작!")
 
         try:
-            # 1단계: 티스토리 관리자 페이지 진입 (CSRF 토큰 확보용)
-            page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
+            # 1단계: 티스토리 글쓰기 페이지 진입 (확실한 주소 사용)
+            page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post?category=0", wait_until="networkidle")
             
+            # 로그인 여부 체크 (한 번 더)
             if "login" in page.url:
-                print(f"❌ '{title[:15]}' 실패: 쿠키가 만료되었습니다.")
+                print("❌ 실패: 쿠키가 만료되었습니다.")
                 break
 
-            time.sleep(2)
+            # 🚨 [중요] 토큰이 로딩될 때까지 기다림 + 다양한 셀렉터 시도
+            token = None
+            for _ in range(10): # 최대 10초 대기
+                # 1. input 요소 찾기
+                token_input = page.locator('input[name="access_token"]').first
+                if token_input.count() > 0:
+                    token = token_input.get_attribute('value')
+                
+                # 2. 혹은 자바스크립트 변수에서 직접 긁기
+                if not token:
+                    token = page.evaluate("window.TISTORY_VARS?.access_token || ''")
+                
+                if token: break
+                time.sleep(1)
 
-            # 2단계: 자바스크립트 직접 전송 (에디터 UI 영향 없음)
+            if not token:
+                print("❌ 실패: 보안 토큰(CSRF)을 찾을 수 없습니다. (로딩 지연)")
+                # 디버깅을 위해 현재 URL 출력
+                print(f"   현재 페이지: {page.url}")
+                continue
+
+            # 2단계: 서버로 직접 쏘기
             safe_title = title.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
             safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
 
-            # visibility '0'은 임시저장/비공개 상태
             save_js = f"""
             (async () => {{
                 try {{
@@ -81,17 +100,14 @@ def go():
                     formData.append('content', `{safe_content}`);
                     formData.append('visibility', '0'); 
                     formData.append('categoryId', '0');
-
-                    const tokenInput = document.querySelector('input[name="access_token"]');
-                    if (!tokenInput) return "NO_TOKEN";
-
-                    formData.append('access_token', tokenInput.value);
+                    formData.append('access_token', '{token}');
 
                     const res = await fetch('/manage/post/save', {{
                         method: 'POST',
                         body: formData
                     }});
-                    return res.ok ? "SUCCESS" : "FAIL";
+                    const text = await res.text();
+                    return res.ok ? "SUCCESS" : "FAIL:" + text;
                 }} catch (e) {{
                     return e.toString();
                 }}
@@ -102,10 +118,8 @@ def go():
             
             if result == "SUCCESS":
                 print(f"✅ 저장 성공: {title[:20]}...")
-            elif result == "NO_TOKEN":
-                print(f"❌ 전송 실패: 보안 토큰을 찾을 수 없습니다.")
             else:
-                print(f"❌ 서버 응답 오류: {result}")
+                print(f"❌ 오류: {result}")
 
             time.sleep(5)
 
