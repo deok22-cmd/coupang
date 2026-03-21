@@ -12,22 +12,23 @@ kst = timezone(timedelta(hours=9))
 today = datetime.now(kst).strftime("%y%m%d")
 
 def go():
-    print(f"🚀 [시스템] 티스토리 자동 업로더 '풀 패키지' 모드를 시작합니다. ({today})")
+    print(f"🚀 [시스템] 티스토리 자동 업로더 '풀 패키지+로그' 버전을 시작합니다. ({today})")
     
     try:
         p = sync_playwright().start()
         b = p.chromium.launch(headless=True)
         c = b.new_context()
+        print("🌐 [시스템] 브라우저 엔진이 정상적으로 가동되었습니다.")
     except Exception as e:
-        print(f"❌ [에러] 브라우저 실행 문제: {e}")
+        print(f"❌ [에러] 브라우저 실행 중 치명적 오류: {e}")
         return
 
     # 쿠키 연동
     raw_cookie = os.environ.get("TISTORY_COOKIE", "").strip()
     if not raw_cookie:
-        print("⚠️ [주의] 쿠키 데이터 없음")
+        print("⚠️ [주의] TISTORY_COOKIE 환경변수가 비어있습니다.")
     else:
-        print("✅ [성공] 쿠키 로드 완료")
+        print("✅ [성공] 쿠키(TISTORY_COOKIE) 로드 완료")
         val = raw_cookie.split("TSSESSION=")[1].split(";")[0] if "TSSESSION=" in raw_cookie else raw_cookie
         c.add_cookies([{"name": "TSSESSION", "value": val, "domain": ".tistory.com", "path": "/"}])
 
@@ -35,14 +36,17 @@ def go():
     
     # 원고 리스트 확보
     search_path = f"blog_drafts/{today}/tistory/*.md"
+    print(f"🔍 [시스템] 원고를 찾는 중: {search_path}")
     md_list = glob.glob(search_path)
     md_list.sort()
 
     if not md_list:
-        print(f"🏕️ [{today}] 원고를 찾지 못했습니다.")
+        print(f"🏕️ [{today}] 업로드할 티토리 원고를 찾지 못했습니다. (경로 확인 요망)")
         b.close()
         p.stop()
         return
+
+    print(f"📝 [시스템] 총 {len(md_list)}개의 원고 발견. 작업을 시작합니다.")
 
     for f in md_list:
         try:
@@ -50,13 +54,13 @@ def go():
                 raw_text = fp.read()
             if not raw_text: continue
 
-            # [정규식 파싱]
+            # [레이저 파싱]
             title_match = re.search(r'"\[제목\]"\s*:(.*?)"\[본문\]"\s*:', raw_text, re.DOTALL)
             content_match = re.search(r'"\[본문\]"\s*:(.*)', raw_text, re.DOTALL)
             title = title_match.group(1).strip() if title_match else os.path.basename(f)
             content = content_match.group(1).strip() if content_match else raw_text
 
-            print(f"📤 [준비] '{title[:15]}...' 전송 시작")
+            print(f"📤 [진행] '{title[:15]}...' 로딩 중")
             page.goto(f"https://{BLOG_NAME}.tistory.com/manage/post", wait_until="networkidle")
             time.sleep(10)
 
@@ -64,13 +68,12 @@ def go():
                 print(f"❌ '{title[:15]}' 실패: 쿠키 만료")
                 break
 
-            # 1. 제목 입력
+            # 제목 입력
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.wait_for(timeout=30000)
             page.locator('textarea[placeholder="제목을 입력하세요"], textarea.textarea_tit').first.fill(title)
             
-            # 💡 2. 이미지 자동 매칭 및 첨부 (추가됨)
+            # 📸 이미지 자동 첨부 (상품별 2장씩 매칭)
             try:
-                # 파일명에서 상품 기호(A, B, C, D) 추출
                 symbol = "A"
                 if "_post_B_" in f: symbol = "B"
                 elif "_post_C_" in f: symbol = "C"
@@ -80,53 +83,46 @@ def go():
                 imgs = glob.glob(img_path)
                 if imgs:
                     imgs.sort()
-                    page.locator('input[type="file"]').set_input_files(imgs)
-                    print(f"   📸 {symbol} 상품 이미지 {len(imgs)}장 첨부 시도 완료")
-                    time.sleep(5) # 업로드 시간 대기
+                    # 2장까지 첨부
+                    page.locator('input[type="file"]').set_input_files(imgs[:2])
+                    print(f"   📸 {symbol} 상품 전용 이미지 {len(imgs[:2])}장 첨부 완료")
+                    time.sleep(5)
             except Exception as img_e:
-                print(f"   ⚠️ 이미지 첨부 중 사소한 에러 (무시): {img_e}")
+                print(f"   ⚠️ 이미지 첨부 중 경미한 오류: {img_e}")
 
-            # 3. 마크다운 모드 전환
+            # 모드 전환 및 본문 주입
             try:
                 page.evaluate("""() => {
-                    const btns = Array.from(document.querySelectorAll('button'));
-                    const modeBtn = btns.find(b => b.innerText.includes('모드') || b.id.includes('editor-mode'));
-                    if (modeBtn) modeBtn.click();
+                    const b = Array.from(document.querySelectorAll('button')).find(el => el.innerText.includes('모드'));
+                    if (b) b.click();
                 }""")
                 time.sleep(1)
                 page.evaluate("""() => {
-                    const items = Array.from(document.querySelectorAll('li, a, button'));
-                    const mdItem = items.find(i => i.innerText.includes('마크다운') || i.innerText.includes('Markdown'));
-                    if (mdItem) mdItem.click();
+                    const i = Array.from(document.querySelectorAll('li, button')).find(el => el.innerText.includes('마크다운'));
+                    if (i) i.click();
                 }""")
                 time.sleep(5)
             except: pass
 
-            # 4. 본문 주입 (3단계)
+            # 본문 3중 주입
             safe_content = content.replace('`', '\\`').replace('$', '\\$').replace('\\', '\\\\')
             injected = page.evaluate(f"""() => {{
-                const cmNode = document.querySelector('.CodeMirror');
-                if (cmNode && cmNode.CodeMirror) {{
-                    cmNode.CodeMirror.setValue(`{safe_content}`);
-                    return "CODEMIRROR";
-                }}
+                // 1) CodeMirror
+                const cm = document.querySelector('.CodeMirror')?.CodeMirror;
+                if (cm) {{ cm.setValue(`{safe_content}`); return "CODEMIRROR"; }}
+                // 2) Textarea
                 const ta = document.querySelector('textarea.textarea_input') || document.querySelector('#editor-markdown');
-                if (ta) {{
-                    ta.value = `{safe_content}`;
-                    return "TEXTAREA";
-                }}
-                const ce = document.querySelector('.tt_article_content [contenteditable="true"]') || document.querySelector('#ke_editor_get_content');
-                if (ce) {{
-                    ce.innerText = `{safe_content}`;
-                    return "CONTENTEDITABLE";
-                }}
+                if (ta) {{ ta.value = `{safe_content}`; return "TEXTAREA"; }}
+                // 3) ContentEditable
+                const ce = document.querySelector('.tt_article_content [contenteditable="true"]');
+                if (ce) {{ ce.innerText = `{safe_content}`; return "CONTENTEDITABLE"; }}
                 return "FAIL";
             }}""")
             print(f"🎯 [에디터] 본문 주입 방식: {injected}")
             time.sleep(3)
 
-            # 5. 저장/발행
-            result_data = page.evaluate("""() => {
+            # 저장/발행
+            res = page.evaluate("""() => {
                 const b_list = Array.from(document.querySelectorAll('button'));
                 let target = b_list.find(b => b.innerText.includes('임시저장') || b.innerText.includes('저장'));
                 if (!target) target = b_list.find(b => b.innerText.includes('완료') || b.innerText.includes('발행'));
@@ -134,22 +130,29 @@ def go():
                 return { ok: false };
             }""")
 
-            if result_data.get('ok'):
+            if res.get('ok'):
                 time.sleep(3)
-                if "완료" in result_data['msg'] or "발행" in result_data['msg']:
+                if "완료" in res['msg'] or "발행" in res['msg']:
                     page.evaluate("if(document.getElementById('open20')) document.getElementById('open20').click();")
-                    page.locator('button#publish-btn, button:has-text("발행"), button:has-text("등록")').first.click(force=True)
+                    page.locator('button#publish-btn, button:has-text("발행")').first.click(force=True)
                     print(f"✅ [성공] 비공개 발행 완료: {title[:15]}")
                 else:
                     print(f"✅ [성공] 임시저장 완료: {title[:15]}")
             else:
                 page.keyboard.press("Enter")
+                print("⌨️ [긴급] 저장 버튼 미발견으로 엔터 시도")
 
             time.sleep(5) 
 
         except Exception as e:
-            print(f"❌ '{f}' 개별 오류: {e}")
+            print(f"❌ '{f}' 개별 오류 상세: {e}")
 
     b.close()
     p.stop()
-    print("🏁 [종료] 3월 21일 풀 패키지 작업을 모두 마쳤습니다.")
+    print("🏁 [종료] 모든 티스토리 업로드 작업을 완료했습니다.")
+
+if __name__ == "__main__":
+    try:
+        go()
+    except Exception as e:
+        print(f"🔥 [치명적 오류] 실행 실패: {e}")
